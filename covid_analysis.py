@@ -61,8 +61,8 @@ print("ILLUSTRATIVE SAMPLE DATA — not verified historical statistics")
 print(f"Input rows: {len(raw_data)}")
 print(f"Valid rows: {len(cleaned_data)}")
 
-display(cleaned_data)
-display(summary)
+print(cleaned_data.to_string(index=False))
+print(summary.to_string())
 
 fig, ax = plt.subplots(figsize=(9, 5))
 
