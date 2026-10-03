@@ -1,98 +1,95 @@
-# covid_analysis.py
-# A self-contained COVID-19 data analysis script.
-# - If no CSV is provided, it uses an internal sample dataset.
-# - Outputs: output/summary.txt and output/trend.png
-
-import os
-import sys
+from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def sample_dataframe() -> pd.DataFrame:
-    """Create a small built-in dataset so the script works without any external files."""
-    return pd.DataFrame({
-        "country": ["Germany","Germany","Germany","Pakistan","Pakistan","Pakistan"],
-        "date":    ["2021-01-01","2021-06-01","2021-12-01","2021-01-01","2021-06-01","2021-12-01"],
-        "cases":   [1800000, 3700000, 6000000, 480000,  940000,  1300000],
-        "deaths":  [35000,   89000,   100000,  10000,   22000,   28000]
-    })
+# Illustrative sample values, not verified historical statistics.
+data = {
+    "country": ["Germany"] * 3 + ["Pakistan"] * 3,
+    "date": [
+        "2021-01-01", "2021-06-01", "2021-12-01",
+        "2021-01-01", "2021-06-01", "2021-12-01"
+    ],
+    "cases": [1800000, 3700000, 6000000, 480000, 940000, 1300000],
+    "deaths": [35000, 89000, 100000, 10000, 22000, 28000]
+}
 
-def load_data(csv_path: str | None) -> pd.DataFrame:
-    """
-    Load CSV if path is provided and exists; otherwise return a sample DataFrame.
-    Expected columns: country,date,cases,deaths
-    """
-    if csv_path and os.path.exists(csv_path):
-        df = pd.read_csv(csv_path)
-    else:
-        df = sample_dataframe()
-
-    # Normalize column names
-    df.columns = [c.lower() for c in df.columns]
+def clean_data(df):
+    df = df.copy()
+    df.columns = df.columns.str.strip().str.lower()
 
     required = {"country", "date", "cases", "deaths"}
-    if not required.issubset(df.columns):
-        raise ValueError(f"CSV must include columns: {required}")
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing columns: {sorted(missing)}")
 
-    return df
-
-def clean_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Basic cleaning + typing + sorting."""
+    df["country"] = df["country"].astype("string").str.strip()
+    df["country"] = df["country"].replace("", pd.NA)
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df["cases"] = pd.to_numeric(df["cases"], errors="coerce")
-    df["deaths"] = pd.to_numeric(df["deaths"], errors="coerce")
+
+    for column in ["cases", "deaths"]:
+        df[column] = pd.to_numeric(df[column], errors="coerce")
 
     df = df.dropna(subset=["country", "date", "cases", "deaths"])
-    df = df.sort_values(["country", "date"]).reset_index(drop=True)
-    return df
+    df = df[
+        (df["cases"] >= 0) &
+        (df["deaths"] >= 0) &
+        (df["deaths"] <= df["cases"])
+    ]
 
-def make_summary(df: pd.DataFrame, outdir: str) -> str:
-    """Write a concise summary.txt with key stats."""
-    lines = []
-    lines.append("COVID-19 Data Analysis Summary\n")
-    lines.append(f"Countries: {df['country'].nunique()}")
-    try:
-        dmin = df["date"].min().date()
-        dmax = df["date"].max().date()
-        lines.append(f"Date range: {dmin} to {dmax}\n")
-    except Exception:
-        lines.append("Date range: (unavailable)\n")
+    df = df.drop_duplicates()
+    return df.sort_values(["country", "date"]).reset_index(drop=True)
 
-    lines.append("Max Cases by Country:")
-    lines.append(str(df.groupby("country")["cases"].max()))
 
-    lines.append("\nMax Deaths by Country:")
-    lines.append(str(df.groupby("country")["deaths"].max()))
+output_dir = Path("covid_output")
+output_dir.mkdir(exist_ok=True)
 
-    path = os.path.join(outdir, "summary.txt")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-    return path
+# Save and reload CSV to demonstrate the data-loading workflow.
+pd.DataFrame(data).to_csv(output_dir / "sample_data.csv", index=False)
+raw_data = pd.read_csv(output_dir / "sample_data.csv")
+cleaned_data = clean_data(raw_data)
 
-def plot_trend(df: pd.DataFrame, outdir: str) -> str:
-    """
-    Plot cases trend by country.
-    One simple line per country (no custom colors/styles).
-    """
-    plt.figure(figsize=(9, 5))
-    for country, g in df.groupby("country"):
-        g = g.sort_values("date")
-        # Convert dates to strings for x-axis readability
-        plt.plot(g["date"].astype(str), g["cases"], marker="o", label=country)
+if cleaned_data.empty:
+    raise ValueError("No valid rows remain after cleaning.")
 
-    plt.title("COVID-19 Cases Trend by Country")
-    plt.xlabel("Date")
-    plt.ylabel("Cases")
-    plt.xticks(rotation=45)
-    plt.legend()
-    plt.tight_layout()
+summary = cleaned_data.groupby("country").agg(
+    max_cases=("cases", "max"),
+    max_deaths=("deaths", "max"),
+    observations=("date", "count")
+)
 
-    path = os.path.join(outdir, "trend.png")
-    plt.savefig(path)
-    return path
+print("ILLUSTRATIVE SAMPLE DATA — not verified historical statistics")
+print(f"Input rows: {len(raw_data)}")
+print(f"Valid rows: {len(cleaned_data)}")
 
-def parse_args():
-    """
-    Minimal arg parsing without external libraries.
-    Usage:
-      python covid_analysis.py --csv your_data.c
+display(cleaned_data)
+display(summary)
+
+fig, ax = plt.subplots(figsize=(9, 5))
+
+for country, rows in cleaned_data.groupby("country"):
+    ax.plot(rows["date"], rows["cases"], marker="o", label=country)
+
+ax.set_title("COVID-19 Case Trends — Illustrative Sample Data")
+ax.set_xlabel("Date")
+ax.set_ylabel("Cases")
+ax.ticklabel_format(axis="y", style="plain")
+ax.legend()
+ax.grid(alpha=0.3)
+fig.autofmt_xdate()
+fig.tight_layout()
+
+fig.savefig(output_dir / "trend.png", dpi=150)
+plt.show()
+
+cleaned_data.to_csv(output_dir / "cleaned_data.csv", index=False)
+summary.to_csv(output_dir / "summary.csv")
+
+(output_dir / "summary.txt").write_text(
+    "Illustrative sample data; not verified historical statistics.\n\n"
+    + summary.to_string(),
+    encoding="utf-8"
+)
+
+print("Saved files:")
+for file in sorted(output_dir.iterdir()):
+    print(file.name)
